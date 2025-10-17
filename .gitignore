@@ -1,0 +1,50 @@
+# Python virtual environment folders
+# This is the most important rule!
+venv/
+env/
+.venv/
+.env
+
+# Python bytecode and cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python distribution and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE and editor-specific folders
+.vscode/
+.idea/
+
+# Operating System generated files
+.DS_Store
+Thumbs.db
+
+# --- Project-Specific Files ---
+
+# Debug images created by your OCR script
+debug_page_*.png
+
+# Output text files from testing
+*.txt
+
+# (Optional) Your collection of PDF files.
+# It's often better to not track large data files in Git.
+# Uncomment the line below if you want to ignore your PDF folder.
+# pdfs/
+
+# (Optional) Downloaded models if they are saved locally in the project.
+# (Note: Most libraries like sentence-transformers save models outside the project).
+# models/
+# *.pth
+# *.onnx
+
+# Testing and coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
