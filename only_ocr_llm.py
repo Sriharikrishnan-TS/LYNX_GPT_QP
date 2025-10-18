@@ -103,7 +103,7 @@ def extract_metadata_with_llama3(text: str) -> dict:
     \"\"\"
     """
     payload = {
-        "model": "gemma:2b",
+        "model": "llama3",
         "prompt": prompt,
         "format": "json",
         "stream": False
