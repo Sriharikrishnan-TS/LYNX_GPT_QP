@@ -8,7 +8,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 
 # --- ⚙️ CONFIGURATION ---
-PDF_PATH = "lynx_gpt_qp-2.pdf"
+PDF_PATH = "lynx_gpt_qp-3.pdf"
 # This is a popular, high-performance model that's small and fast.
 MODEL_NAME = 'all-MiniLM-L6-v2'
 
@@ -26,12 +26,13 @@ def extract_text_with_tesseract(pdf_path: str) -> str:
         print(f"[ERROR] PDF file not found at: {pdf_path}")
         return ""
     try:
-        images = convert_from_path(pdf_path)
+        custom_config = r'--oem 3 --psm 6'
+        images = convert_from_path(pdf_path,last_page=1,dpi=300)
         full_text = []
         for i, image in enumerate(images):
             print(f"INFO: Processing page {i + 1}/{len(images)}...")
             preprocessed_img = simple_preprocess_image(image)
-            text = pytesseract.image_to_string(preprocessed_img)
+            text = pytesseract.image_to_string(preprocessed_img,config=custom_config)
             if text:
                 full_text.append(text)
         print("INFO: OCR completed.")
@@ -40,7 +41,7 @@ def extract_text_with_tesseract(pdf_path: str) -> str:
         print(f"[ERROR] Failed during Tesseract extraction: {e}")
         return ""
 
-# --- 🧠 2. METADATA EXTRACTION (Sentence Transformers) ---
+# ---  2. METADATA EXTRACTION (Sentence Transformers) ---
 
 def extract_metadata_with_embeddings(text: str) -> dict:
     """
@@ -88,7 +89,7 @@ def extract_metadata_with_embeddings(text: str) -> dict:
 
     return metadata
 
-# --- ▶️ 3. MAIN EXECUTION ---
+# --- 3. MAIN EXECUTION ---
 
 if __name__ == "__main__":
     raw_text = extract_text_with_tesseract(PDF_PATH)
