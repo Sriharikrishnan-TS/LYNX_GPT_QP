@@ -24,26 +24,45 @@ def extract_metadata_from_query(query_text: str) -> dict:
     
     # --- UPDATED PROMPT ---
     prompt = f"""
-You are an expert at analyzing user queries about question papers and extracting key metadata into a JSON object. Your goal is to identify the department, subject, and year mentioned.
+You are an expert at analyzing user queries about question papers and extracting key metadata into a JSON object. Your goal is to identify the department, subject, and year.
 
 Follow these rules:
-1.  **Output Format:** Respond ONLY with a single, valid JSON object. Do not include explanations or markdown.
-2.  **Fields:** Extract "department", "subject", and "year".
-3.  **Completeness:** Try your best to fill all fields based on the query. Only use null if a piece of information is clearly absent or impossible to determine.
-4.  **Typo Correction:** If you are highly confident (e.g., >95% sure) that a word in the query related to department or subject is a common typo (like "algoritms" instead of "algorithms", or "engneering" instead of "engineering"), you may return the corrected term. Otherwise, return the term as written in the query.
-5.  **Year:** Extract the four-digit year.
+1.  **Output Format:** Respond ONLY with a single, valid JSON object. Do not include any explanations, reasoning, or markdown.
+2.  **Fields:** You must extract "department", "subject", and "year".
+3.  **Full Subject Extraction:** When a subject is mentioned, extract the **fullest possible name** of the subject, not just one keyword. For example, if the query says "design and analysis of algorithms", the subject is "design and analysis of algorithms", not "algorithms".
+4.  **Abbreviation Expansion:** You **must** recognize and expand common, case-insensitive abbreviations to their full department names in the output.
+    * `cse`, `cs` -> `computer science and engineering`
+    * `ece` -> `electronics and communication engineering`
+    * `eee` -> `electrical and electronics engineering`
+    * `ice` -> `instrumentation and control engineering`
+    * `mech` -> `mechanical engineering`
+    * `chem` -> `chemical engineering`
+    * `prod` -> `production engineering`
+    * `mme` -> `metallurgical and material science engineering`
+    * `civil` -> `civil engineering`
+5.  **Robust Typo Correction:** You **must** correct common misspellings in department and subject names, even if they span multiple words. Be highly confident (e.g., >95% sure) before correcting.
+    * `engneering` -> `engineering`
+    * `algoritms` -> `algorithms`
+    * `computr science` -> `computer science`
+    * `desing and analyis` -> `design and analysis`
+6.  **Year:** Extract the four-digit year.
+7.  **Completeness:** If a value is genuinely not present or ambiguous, use `null`. (This rule is for you, the model, even though the examples below are all complete).
 
 [EXAMPLE 1]
-Query: "find papers for CSE department from 2023"
-JSON Output: {{"department": "CSE", "subject": null, "year": 2023}}
+Query: "find papers for cse department from 2023 on data structures"
+JSON Output: {{"department": "computer science and engineering", "subject": "data structures", "year": "2023"}}
 
 [EXAMPLE 2]
-Query: "show me the algoritms papers from computr science"
-JSON Output: {{"department": "computer science", "subject": "algorithms", "year": null}}
+Query: "show me the 2021 algoritms papers from computr science"
+JSON Output: {{"department": "computer science", "subject": "algorithms", "year": "2021"}}
 
 [EXAMPLE 3]
-Query: "any question paper for mechanical 2022?"
-JSON Output: {{"department": "mechanical", "subject": null, "year": 2022}}
+Query: "any question paper for mech 2022 on thermodynamics?"
+JSON Output: {{"department": "mechanical engineering", "subject": "thermodynamics", "year": "2022"}}
+
+[EXAMPLE 4]
+Query: "get me computer science and engineering desing and analyis of algorithms of 2023 paper"
+JSON Output: {{"department": "computer science and engineering", "subject": "design and analysis of algorithms", "year": "2023"}}
 
 Now, analyze the following query:
 

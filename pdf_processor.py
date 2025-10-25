@@ -196,9 +196,9 @@ def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
             db_connection.close()
 
     if insertion_success:
-        return {"filename": filename, "status": "Success", "metadata": metadata}
+        return {"filename": filename, "status": "Success", "metadata": metadata,"raw_text":top_text}
     else:
-        return {"filename": filename, "status": "Error", "message": db_error_message, "metadata": metadata}
+        return {"filename": filename, "status": "Error", "message": db_error_message, "metadata": metadata,"raw_text":top_text}
 
 # Note: The batch processing loop (`if __name__ == "__main__":`) from testing.py is removed
 # as this script will now be imported and used function by function.
