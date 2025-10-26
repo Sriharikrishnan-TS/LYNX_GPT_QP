@@ -1,16 +1,17 @@
-# pdf_processor.py
 import os
 import requests
 import json
 import pytesseract
-from pdf2image import convert_from_bytes # Import convert_from_bytes
+from pdf2image import convert_from_bytes 
 import cv2
 import numpy as np
 import re
 from dotenv import load_dotenv
 import psycopg2
+import supabase
+from supabase import create_client, Client
+import uuid
 
-# --- CONFIGURATION ---
 TOP_N_CHARACTERS = 600
 
 # Load environment variables
@@ -18,12 +19,16 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+supabase_URL = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
 DB_PARAMS = {
     'dbname': os.getenv("DB_NAME", "qp_ingestion2"),
     'user': os.getenv("DB_USER", "postgres"),
-    'password': os.getenv("DB_PASSWORD","Imtherealg@at18"), # Make sure this is set in .env
+    'password': os.getenv("DB_PASSWORD",),
     'host': os.getenv("DB_HOST", "localhost"),
-    'port': os.getenv("DB_PORT", "5432")
+    'port': os.getenv("DB_PORT", "5432"),
+    'sslmode': 'require'
 }
 
 if not GROQ_API_KEY:
@@ -31,6 +36,9 @@ if not GROQ_API_KEY:
 # Basic check for DB password
 if not DB_PARAMS.get('password'):
      print("[WARN] DB_PASSWORD not found in .env file. DB operations might fail.")
+
+supabase_client: Client = create_client(supabase_URL, supabase_key)
+bucketname = 'questionpapers'
 
 # --- OCR & Preprocessing ---
 def preprocess_image(image):
@@ -57,7 +65,7 @@ def extract_text_from_bytes(pdf_bytes: bytes, filename: str) -> str:
 
 # --- LLM Metadata Extraction ---
 def extract_metadata_with_groq_llama3(text: str, filename: str) -> dict:
-    print(f"INFO: Sending text from '{filename}' to Groq Llama 3 API...")
+    print(f"INFO: Sending text from '{filename}' to Groq GPT OSS")
     prompt = f"""
 You are a precision data extraction engine. Your sole task is to analyze text from a university question paper and extract specific metadata fields into a clean JSON object.
 
@@ -88,7 +96,7 @@ Input Text:
 \"\"\"
 B.Tech. DEGREE EXAMINATION, NOVEMBER/DECEMBER 2023.
 Computer Science and Engineering
-CS 8351 – Digital Principles and System Design
+CS 8351 - Digital Principles and System Design
 \"\"\"
 Correct JSON Output:
 {{
@@ -118,7 +126,6 @@ Now, perform the same task on the following text:
         response_data = response.json()
         message_content = response_data['choices'][0]['message']['content']
         metadata = json.loads(message_content)
-        metadata['filename'] = filename
         for key in ['department', 'subject', 'year']: # Ensure keys exist
             if key not in metadata: metadata[key] = None
         return metadata
@@ -131,11 +138,23 @@ Now, perform the same task on the following text:
              except: error_details = e.response.text
         return {'filename': filename, 'error': f"LLM Error: {error_details}"}
 
+#   Uploading file in supabase then getting the url for the uploaded file
+def supabase_bucket(file_bytes: bytes, storage_path: str) -> str:
+    try: 
+        bucket_response = supabase.storage.from_(bucketname).upload(
+                                                                    file = file_bytes,
+                                                                    path = storage_path,
+                                                                    file_options = {}
+                                                                    )
+        url_response = supabase.storage.from_(bucketname).get_public_url(storage_path)
+        return url_response
+    except:
+        print("upload failed")
 
 # --- Database Insertion ---
 def insert_metadata_into_db(metadata: dict, conn):
     print(f"INFO: Inserting metadata for '{metadata.get('filename', 'Unknown file')}'...")
-    sql = "INSERT INTO metadata.metadata (department, subject, year) VALUES (%(department)s, %(subject)s, %(year)s);"
+    sql = "INSERT INTO metadata.metadata (department, subject, year, file_url) VALUES (%(department)s, %(subject)s, %(year)s, %(file_url)s);"
     try:
         with conn.cursor() as cur:
             cur.execute("SET search_path TO metadata, public;") # Set schema context
@@ -151,7 +170,14 @@ def insert_metadata_into_db(metadata: dict, conn):
 # --- Main Processing Function ---
 def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
     """Processes a single PDF (bytes) and inserts metadata into the DB."""
-    
+
+    # solving the case if by chance the filenames are same then in buckets the previous file
+    # would have been overwritten method to solve - assigning a unique id to all files
+    org_filename = filename
+    unique_id = uuid.uuid4()
+    file_extension = os.path.splitext(org_filename)[1].lower()
+    strg_path = f"{unique_id}{file_extension}"
+
     # 1. Extract Text
     raw_text = extract_text_from_bytes(pdf_bytes, filename)
     if not raw_text or not raw_text.strip():
@@ -175,6 +201,10 @@ def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
     else:
         metadata["year"] = None
         print(f"      -> No year found using regex.")
+
+    # 4.5  Adding filename and file_url to metadata
+    file_url = supabase_bucket(pdf_bytes, strg_path)
+    metadata["file_url"] = file_url
 
     # 5. Insert into Database
     db_connection = None
@@ -200,5 +230,3 @@ def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
     else:
         return {"filename": filename, "status": "Error", "message": db_error_message, "metadata": metadata,"raw_text":top_text}
 
-# Note: The batch processing loop (`if __name__ == "__main__":`) from testing.py is removed
-# as this script will now be imported and used function by function.

@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 from pdf_processor import process_single_pdf  # Import the PDF processing function
 from query_processor import process_user_query # Import the query processing function
 
 st.set_page_config(layout="wide")
-st.title("📄 Question Paper Hub")
+st.title("Question Paper Hub")
 
 # --- Use tabs for different sections ---
 tab1, tab2 = st.tabs(["Upload Question Papers", "Query Question Papers"])
@@ -97,15 +98,43 @@ with tab2:
             if query_result.get("error"):
                 st.error(f"An error occurred: {query_result['error']}")
             elif query_result.get("results"):
-                # Display results in a table using Pandas DataFrame
-                try:
-                    df = pd.DataFrame(query_result["results"])
-                    # Display without the index column
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    st.success(f"Found {len(query_result['results'])} matching question papers.")
-                except Exception as e:
-                    st.error(f"Error displaying results: {e}")
-                    st.write(query_result["results"]) # Show raw results if DataFrame fails
+                
+                st.success(f"found {len(query_result['results'])} matching question papers")
+                for index, paper in enumerate(query_result['results']):
+                    key_prefix = f"paper_{index}_"
+                    st.markdown(f"**Department:** {paper.get('department', 'N/A')}")
+                    st.markdown(f"**Subject:**{paper.get('subject','N/A')}")
+                    st.markdown(f"**Year:** {paper.get('year', 'N/A')}")
+
+                    file_url = paper.get('file_url')
+                    if file_url:
+                        file_extension = os.path.splitext(file_url)[1].lower()
+                        if file_extension == '.pdf':
+                            with st.expander("View PDF", expanded=False):
+                                try:
+                                    st.pdf(file_url, height=700)
+                                except Exception as pdf_error:
+                                    st.error(f"Could not load PDF viewer. Error: {pdf_error}")
+                                    st.markdown(f"[Direct Link to PDF]({file_url})")
+
+                        elif file_extension in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']:
+                            with st.expander("View Image", expanded=False):
+                                try:
+                                    st.image(file_url)
+                                except Exception as img_error:
+                                    st.error(f"Could not load image. Error: {img_error}")
+                                    st.markdown(f"[Direct Link to Image]({file_url})")
+                        else:
+                            st.warning(f"Cannot display file type '{file_extension}' directly.")
+                            st.markdown(f"[Download File]({file_url})")
+
+                        st.link_button("Open File in New Tab", file_url, key=f"{key_prefix}_link")
+
+                    else:
+                        st.warning("File URL missing for this database entry.")
+
+                    st.divider()
+
             else:
                 st.warning("No matching question papers found for your query.")
         else:

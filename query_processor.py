@@ -13,9 +13,10 @@ load_dotenv()
 DB_PARAMS = {
     'dbname': os.getenv("DB_NAME", "qp_ingestion2"), # Added default
     'user': os.getenv("DB_USER", "postgres"),       # Added default
-    'password': os.getenv("DB_PASSWORD","Imtherealg@at18"),
+    'password': os.getenv("DB_PASSWORD"),
     'host': os.getenv("DB_HOST", "localhost"),     # Added default
-    'port': os.getenv("DB_PORT", "5432")          # Added default
+    'port': os.getenv("DB_PORT", "5432"),          # Added default
+    'sslmode': 'require'
 }
 
 def extract_metadata_from_query(query_text: str) -> dict:
@@ -96,7 +97,7 @@ JSON Output:
 def build_sql_query(metadata: dict) -> tuple[str, list]:
     """Builds a SQL query based on the extracted metadata."""
     # Selects filename, dept, subject, year from the metadata table
-    base_query = "SELECT department, subject, year FROM metadata.metadata WHERE 1=1"
+    base_query = "SELECT department, subject, year, file_url FROM metadata.metadata WHERE 1=1"
     conditions = []
     params = []
 
