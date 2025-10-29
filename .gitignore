@@ -48,3 +48,5 @@ debug_page_*.png
 .pytest_cache/
 .coverage
 htmlcov/
+debug.py
+only_ocr_llm.py
