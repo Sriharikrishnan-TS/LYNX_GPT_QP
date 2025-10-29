@@ -32,7 +32,7 @@ Follow these rules:
 2.  **Fields:** You must extract "department", "subject", and "year".
 3.  **Full Subject Extraction:** When a subject is mentioned, extract the **fullest possible name** of the subject, not just one keyword. For example, if the query says "design and analysis of algorithms", the subject is "design and analysis of algorithms", not "algorithms".
 4.  **Abbreviation Expansion:** You **must** recognize and expand common, case-insensitive abbreviations to their full department names in the output.
-    * `cse`, `cs` -> `computer science and engineering`
+    * `cse`, `cs` -> `computer science & engineering`
     * `ece` -> `electronics and communication engineering`
     * `eee` -> `electrical and electronics engineering`
     * `ice` -> `instrumentation and control engineering`

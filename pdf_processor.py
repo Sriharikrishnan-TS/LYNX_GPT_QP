@@ -7,8 +7,6 @@ import cv2
 import numpy as np
 import re
 from dotenv import load_dotenv
-import psycopg2
-import supabase
 from supabase import create_client, Client
 import uuid
 
@@ -20,25 +18,14 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 supabase_URL = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-DB_PARAMS = {
-    'dbname': os.getenv("DB_NAME", "qp_ingestion2"),
-    'user': os.getenv("DB_USER", "postgres"),
-    'password': os.getenv("DB_PASSWORD",),
-    'host': os.getenv("DB_HOST", "localhost"),
-    'port': os.getenv("DB_PORT", "5432"),
-    'sslmode': 'require'
-}
+supabase_key = os.getenv("SUPABASE_SERVICE_KEY") 
 
 if not GROQ_API_KEY:
     print("[ERROR] GROQ_API_KEY not found in .env file.")
-# Basic check for DB password
-if not DB_PARAMS.get('password'):
-     print("[WARN] DB_PASSWORD not found in .env file. DB operations might fail.")
+if not supabase_URL or not supabase_key:
+    print("[ERROR] SUPABASE_URL or SUPABASE_SERVICE_KEY not found in .env file.")
 
-supabase_client: Client = create_client(supabase_URL, supabase_key)
-bucketname = 'questionpapers'
+bucketname = 'questionpapers' 
 
 # --- OCR & Preprocessing ---
 def preprocess_image(image):
@@ -50,7 +37,6 @@ def preprocess_image(image):
 def extract_text_from_bytes(pdf_bytes: bytes, filename: str) -> str:
     print(f"\nINFO: Starting Tesseract OCR for '{filename}'...")
     try:
-        # Use convert_from_bytes for in-memory processing
         images = convert_from_bytes(pdf_bytes, last_page=1, dpi=300)
         if not images:
             print("[ERROR] PDF seems empty or unreadable.")
@@ -66,16 +52,18 @@ def extract_text_from_bytes(pdf_bytes: bytes, filename: str) -> str:
 # --- LLM Metadata Extraction ---
 def extract_metadata_with_groq_llama3(text: str, filename: str) -> dict:
     print(f"INFO: Sending text from '{filename}' to Groq GPT OSS")
+    
     prompt = f"""
 You are a precision data extraction engine. Your sole task is to analyze text from a university question paper and extract specific metadata fields into a clean JSON object.
-
 Follow these rules exactly:
 1.  **Output Format:** Respond ONLY with a single, valid JSON object. Do not include any other text or explanations.
 2.  **department:** Extract the full official department name, often found after "DEPARTMENT OF".
 3.  **subject:** Extract only the subject name. The name often follows keywords like "SUBJECT:" or "Sub. Code & Title :". Explicitly exclude any subject codes (e.g., "(ENIR 11)").
 4.  **year:** Extract the four-digit year of the examination, if present.
 5.  **Missing Values:** If any field cannot be found, its value must be null.
-
+6.  **Year Inference (Advice):** Pay close attention to dates.
+    * A string like "2210-24" or "22-10-24" on an exam paper likely means the date "22-10-2024", so the year is 2024.
+    * An academic year like "2023-24" means the exam is for the 2023-2024 session. 2024 is preferred.
 ---
 [EXAMPLE 1]
 Input Text:
@@ -105,9 +93,20 @@ Correct JSON Output:
   "year": 2023
 }}
 ---
-
+[EXAMPLE 3 - NEW]
+Input Text:
+\"\"\"
+DEPARTMENT OF COMPUTER SCIENCE AND ENGG.
+NATIONAL INSTITUTE OF TECHNOLOGY, TIRUCHIRAPPALLE 620 O15. CYCLE TEST II CSHOI7 BIG DATA MINING 2210-24 TIME: 60 Mins
+\"\"\"
+Correct JSON Output:
+{{
+  "department": "COMPUTER SCIENCE AND ENGG.",
+  "subject": "BIG DATA MINING",
+  "year": 2024
+}}
+---
 Now, perform the same task on the following text:
-
 [TEXT TO ANALYZE]
 \"\"\"
 {text}
@@ -126,56 +125,90 @@ Now, perform the same task on the following text:
         response_data = response.json()
         message_content = response_data['choices'][0]['message']['content']
         metadata = json.loads(message_content)
-        for key in ['department', 'subject', 'year']: # Ensure keys exist
+
+        # Standardize year to integer or None
+        for key in ['department', 'subject']:
             if key not in metadata: metadata[key] = None
+        
+        llm_year = metadata.get('year')
+        if isinstance(llm_year, str):
+            try:
+                metadata['year'] = int(llm_year)
+            except (ValueError, TypeError):
+                metadata['year'] = None
+        elif not isinstance(llm_year, int):
+             metadata['year'] = None
+
         return metadata
     except Exception as e:
         print(f"[ERROR] Groq API request failed for {filename}: {e}")
-        # Add error details if available
         error_details = str(e)
         if hasattr(e, 'response') and e.response is not None:
              try: error_details = json.dumps(e.response.json(), indent=2)
              except: error_details = e.response.text
         return {'filename': filename, 'error': f"LLM Error: {error_details}"}
 
-#   Uploading file in supabase then getting the url for the uploaded file
-def supabase_bucket(file_bytes: bytes, storage_path: str) -> str:
+def supabase_bucket(client: Client, file_bytes: bytes, storage_path: str) -> str:
+    if not client:
+        print("[ERROR] Supabase client is invalid. Cannot upload file.")
+        return None
     try: 
-        bucket_response = supabase.storage.from_(bucketname).upload(
+        print(f"INFO: Uploading to Supabase bucket '{bucketname}' at path '{storage_path}'...")
+        bucket_response = client.storage.from_(bucketname).upload(
                                                                     file = file_bytes,
                                                                     path = storage_path,
-                                                                    file_options = {}
+                                                                    file_options = {"content-type": "application/pdf"}
                                                                     )
-        url_response = supabase.storage.from_(bucketname).get_public_url(storage_path)
+
+        url_response = client.storage.from_(bucketname).get_public_url(storage_path)
+        print(f"INFO: File upload successful. Public URL: {url_response}")
         return url_response
-    except:
-        print("upload failed")
+    except Exception as e:
+        print(f"[ERROR] Supabase file upload failed: {e}")
+        return None
 
-# --- Database Insertion ---
-def insert_metadata_into_db(metadata: dict, conn):
-    print(f"INFO: Inserting metadata for '{metadata.get('filename', 'Unknown file')}'...")
-    sql = "INSERT INTO metadata.metadata (department, subject, year, file_url) VALUES (%(department)s, %(subject)s, %(year)s, %(file_url)s);"
+def insert_metadata_into_db(client: Client, metadata: dict) -> bool:
+    if not client:
+        print("[ERROR] Supabase client is invalid. Cannot insert metadata.")
+        return False
+        
+    print(f"INFO: Inserting metadata for 'file_url: {metadata.get('file_url', 'Unknown file')}' into Supabase table...")
+    
+    db_data = {
+        "department": metadata.get("department"),
+        "subject": metadata.get("subject"),
+        "year": metadata.get("year"),
+        "file_url": metadata.get("file_url")
+    }
+
     try:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path TO metadata, public;") # Set schema context
-            cur.execute(sql, metadata)
-        conn.commit()
-        print("[SUCCESS] Data inserted into the database.")
-        return True # Indicate success
-    except (Exception, psycopg2.DatabaseError) as error:
-        print(f"[ERROR] Database insertion failed: {error}")
-        conn.rollback()
-        return False # Indicate failure
+        data, count = client.schema('metadata').table('metadata').insert(db_data).execute()
+        print("[SUCCESS] Data inserted into the Supabase database.")
+        return True 
+    except Exception as e:
+        print(f"[ERROR] Supabase database insertion failed: {e}")
+        return False 
 
-# --- Main Processing Function ---
+# --- Main Processing Function  ---
 def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
-    """Processes a single PDF (bytes) and inserts metadata into the DB."""
+    """Processes a single PDF (bytes), uploads to storage, and inserts metadata."""
+    
+    try:
+        if not supabase_URL or not supabase_key:
+            print("[ERROR] Cannot create client, .env variables missing.")
+            return {"filename": filename, "status": "Error", "message": "Server-side error: .env variables not loaded."}
+            
+        supabase_client: Client = create_client(supabase_URL, supabase_key)
+        print("INFO: Supabase client initialized for this job.")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize Supabase client: {e}")
+        return {"filename": filename, "status": "Error", "message": f"Failed to initialize Supabase client: {e}"}
+         
 
-    # solving the case if by chance the filenames are same then in buckets the previous file
-    # would have been overwritten method to solve - assigning a unique id to all files
     org_filename = filename
     unique_id = uuid.uuid4()
     file_extension = os.path.splitext(org_filename)[1].lower()
+    if not file_extension: file_extension = ".pdf" 
     strg_path = f"{unique_id}{file_extension}"
 
     # 1. Extract Text
@@ -190,43 +223,35 @@ def process_single_pdf(pdf_bytes: bytes, filename: str) -> dict:
     metadata = extract_metadata_with_groq_llama3(top_text, filename)
     if 'error' in metadata:
         return {"filename": filename, "status": "Error", "message": metadata['error']}
-
-    # 4. Compulsory Regex for Year
-    print(f"INFO: Applying compulsory regex for year extraction on '{filename}'...")
-    year_match = re.search(r"\b(20\d{2})\b", top_text)
-    if year_match:
-        found_year = int(year_match.group(1))
-        metadata["year"] = found_year
-        print(f"      -> Set year to '{found_year}' using regex.")
+    
+    # 4. Compulsory Regex for Year (FALLBACK LOGIC)
+    print(f"INFO: Checking year extraction for '{filename}'...")
+    if metadata.get("year") is None:
+        print("INFO: LLM found no year. Applying regex fallback...")
+        # Simpler regex for "20XX"
+        year_match = re.search(r"\b(20\d{2})\b", top_text) 
+        if year_match:
+            found_year = int(year_match.group(1))
+            metadata["year"] = found_year
+            print(f"      -> Set year to '{found_year}' using regex fallback.")
+        else:
+            print(f"      -> No year found using regex fallback.")
     else:
-        metadata["year"] = None
-        print(f"      -> No year found using regex.")
+        print(f"INFO: LLM successfully found year: {metadata.get('year')}. Skipping regex.")
 
-    # 4.5  Adding filename and file_url to metadata
-    file_url = supabase_bucket(pdf_bytes, strg_path)
+
+    # 5. Upload to Supabase Storage
+    file_url = supabase_bucket(supabase_client, pdf_bytes, strg_path)
+    if not file_url:
+        return {"filename": filename, "status": "Error", "message": "Failed to upload file to Supabase storage.", "metadata": metadata,"raw_text":top_text}
+    
     metadata["file_url"] = file_url
 
-    # 5. Insert into Database
-    db_connection = None
-    insertion_success = False
-    db_error_message = "DB connection could not be established."
-    try:
-        db_connection = psycopg2.connect(**DB_PARAMS)
-        insertion_success = insert_metadata_into_db(metadata, db_connection)
-        if not insertion_success:
-             db_error_message = "Failed to insert data into DB." # More specific error captured by insert function
-    except psycopg2.OperationalError as e:
-        print(f"[ERROR] Could not connect to the database: {e}")
-        db_error_message = f"Database connection error: {e}"
-    except Exception as e:
-        print(f"[ERROR] An unexpected error occurred during DB operation: {e}")
-        db_error_message = f"Unexpected DB error: {e}"
-    finally:
-        if db_connection:
-            db_connection.close()
+    # 6. Insert into Supabase Database
+    insertion_success = insert_metadata_into_db(supabase_client, metadata)
 
     if insertion_success:
         return {"filename": filename, "status": "Success", "metadata": metadata,"raw_text":top_text}
     else:
-        return {"filename": filename, "status": "Error", "message": db_error_message, "metadata": metadata,"raw_text":top_text}
+        return {"filename": filename, "status": "Error", "message": "Failed to insert metadata into Supabase database.", "metadata": metadata,"raw_text":top_text}
 
