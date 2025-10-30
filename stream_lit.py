@@ -2,11 +2,24 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import requests  # <-- Added for download button
 from pdf_processor import process_single_pdf  # Import the PDF processing function
 from query_processor import process_user_query # Import the query processing function
 
 st.set_page_config(layout="wide")
 st.title("Question Paper Hub")
+
+# --- Helper function to fetch and cache PDF bytes ---
+@st.cache_data
+def get_pdf_bytes(url):
+    """Fetches and caches the PDF bytes from a public URL."""
+    try:
+        response = requests.get(url)
+        response.raise_for_status() # Raise an exception for bad status codes
+        return response.content
+    except requests.RequestException as e:
+        st.error(f"Error fetching PDF for download: {e}")
+        return None
 
 # --- Use tabs for different sections ---
 tab1, tab2 = st.tabs(["Upload Question Papers", "Query Question Papers"])
@@ -49,10 +62,10 @@ with tab1:
                 st.error(f"Failed to process **{file_name}**: {result.get('message', 'Unknown error')}")
                 # Optionally show partial metadata if available on error
                 if "metadata" in result:
-                        with st.expander("Show Partially Extracted Metadata (Before DB Error)"):
-                            st.json(result.get("metadata", {}))
-                        with st.expander("show raw extracted text from ocr"):
-                            st.write(result.get("raw_text"))
+                    with st.expander("Show Partially Extracted Metadata (Before DB Error)"):
+                        st.json(result.get("metadata", {}))
+                    with st.expander("show raw extracted text from ocr"):
+                        st.write(result.get("raw_text"))
             st.markdown("---") # Separator between file results
     else:
         st.info("Upload PDF files using the button above.")
@@ -64,23 +77,19 @@ with tab2:
     st.markdown("Enter your query to search the database for question papers.")
 
     # --- 1. Create a form ---
-    # This groups the text input and submit button
     with st.form(key="query_form"):
-        # User Input for Query (now inside the form)
         user_query = st.text_input(
             "Enter query (e.g., 'CSE papers 2023', 'algorithms endsem'):",
             key="query_input" # Unique key
         )
         
-        submit_button = st.form_submit_button(label="Send")
+        submit_button = st.form_submit_button(label="Send Query") # Changed label for clarity
 
     # --- 3. Check if the button was pressed ---
     if submit_button:
-        # We also check if the user actually typed something
         if user_query:
             st.markdown("---") # Separator
             with st.spinner("Searching the database..."):
-                # Call the backend processing function from query_processor.py
                 query_result = process_user_query(user_query)
 
             # Display Debug Info (Optional)
@@ -99,48 +108,62 @@ with tab2:
                 st.error(f"An error occurred: {query_result['error']}")
             elif query_result.get("results"):
                 
-                st.success(f"found {len(query_result['results'])} matching question papers")
+                st.success(f"Found {len(query_result['results'])} matching question papers.")
+                
                 for index, paper in enumerate(query_result['results']):
-                    key_prefix = f"paper_{index}_"
                     st.markdown(f"**Department:** {paper.get('department', 'N/A')}")
-                    st.markdown(f"**Subject:**{paper.get('subject','N/A')}")
+                    st.markdown(f"**Subject:** {paper.get('subject','N/A')}")
                     st.markdown(f"**Year:** {paper.get('year', 'N/A')}")
 
                     file_url = paper.get('file_url')
                     if file_url:
                         file_extension = os.path.splitext(file_url)[1].lower()
+                        
                         if file_extension == '.pdf':
+                            # --- FIX 1: Replaced st.pdf() with a reliable iframe ---
                             with st.expander("View PDF", expanded=False):
-                                try:
-                                    st.pdf(file_url, height=700)
-                                except Exception as pdf_error:
-                                    st.error(f"Could not load PDF viewer. Error: {pdf_error}")
-                                    st.markdown(f"[Direct Link to PDF]({file_url})")
+                                st.markdown(
+                                    f'<iframe src="{file_url}" width="100%" height="700" style="border: none; border-radius: 8px;"></iframe>', 
+                                    unsafe_allow_html=True
+                                )
 
                         elif file_extension in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']:
                             with st.expander("View Image", expanded=False):
-                                try:
-                                    st.image(file_url)
-                                except Exception as img_error:
-                                    st.error(f"Could not load image. Error: {img_error}")
-                                    st.markdown(f"[Direct Link to Image]({file_url})")
+                                st.image(file_url)
                         else:
                             st.warning(f"Cannot display file type '{file_extension}' directly.")
-                            st.markdown(f"[Download File]({file_url})")
 
-                        st.link_button("Open File in New Tab", file_url, key=f"{key_prefix}_link")
+                        # --- FIX 2 & 3: Fixed link_button and added download_button ---
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            # 1. Open in new tab (key removed)
+                            st.link_button("Open in New Tab", file_url, use_container_width=True)
+
+                        with col2:
+                            # 2. Download button (newly added)
+                            pdf_bytes = get_pdf_bytes(file_url)
+                            
+                            # Create a clean filename
+                            file_name = f"{paper.get('subject', 'paper')}_{paper.get('year', 'NA')}.pdf".replace(" ", "_").replace("/", "_")
+                            
+                            if pdf_bytes:
+                                st.download_button(
+                                    label="Download PDF",
+                                    data=pdf_bytes,
+                                    file_name=file_name,
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
 
                     else:
                         st.warning("File URL missing for this database entry.")
 
-                    st.divider()
+                    st.divider() # Use st.divider for a modern separator
 
             else:
                 st.warning("No matching question papers found for your query.")
         else:
-            # Show a warning if they click "Send" with no text
             st.warning("Please enter a query before sending.")
 
     else:
-        # This is the default message before the button is clicked
         st.info("Enter a query above and press 'Send Query' to search.")

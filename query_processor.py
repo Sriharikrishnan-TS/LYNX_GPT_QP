@@ -5,8 +5,9 @@ import os
 from dotenv import load_dotenv
 
 # --- Configuration ---
-OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
-LLM_MODEL = "gemma:2b"
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Load database credentials from .env file
 load_dotenv()
@@ -21,49 +22,60 @@ DB_PARAMS = {
 
 def extract_metadata_from_query(query_text: str) -> dict:
     """Uses Gemma to extract metadata (dept, subject, year) from a user query."""
-    print(f"INFO: Sending query to {LLM_MODEL} for metadata extraction: '{query_text}'")
+    print(f"INFO: Sending query to gpt-oss:20b for metadata extraction: '{query_text}'")
     
     # --- UPDATED PROMPT ---
     prompt = f"""
 You are an expert at analyzing user queries about question papers and extracting key metadata into a JSON object. Your goal is to identify the department, subject, and year.
 
-Follow these rules:
+Follow these rules exactly:
 1.  **Output Format:** Respond ONLY with a single, valid JSON object. Do not include any explanations, reasoning, or markdown.
 2.  **Fields:** You must extract "department", "subject", and "year".
-3.  **Full Subject Extraction:** When a subject is mentioned, extract the **fullest possible name** of the subject, not just one keyword. For example, if the query says "design and analysis of algorithms", the subject is "design and analysis of algorithms", not "algorithms".
-4.  **Abbreviation Expansion:** You **must** recognize and expand common, case-insensitive abbreviations to their full department names in the output.
-    * `cse`, `cs` -> `computer science & engineering`
-    * `ece` -> `electronics and communication engineering`
-    * `eee` -> `electrical and electronics engineering`
-    * `ice` -> `instrumentation and control engineering`
-    * `mech` -> `mechanical engineering`
-    * `chem` -> `chemical engineering`
-    * `prod` -> `production engineering`
-    * `mme` -> `metallurgical and material science engineering`
-    * `civil` -> `civil engineering`
-5.  **Robust Typo Correction:** You **must** correct common misspellings in department and subject names, even if they span multiple words. Be highly confident (e.g., >95% sure) before correcting.
-    * `engneering` -> `engineering`
+3.  **Full Subject Extraction:** When a subject is mentioned, extract the **fullest possible name** of the subject, not just one keyword. (e.g., "design and analysis of algorithms", not "algorithms").
+
+4.  **Subject Normalization:** You **must** convert the extracted subject name to **all lowercase**.
+
+5.  **Department Standardization (CRITICAL):** You must normalize all department names (full names, common typos, abbreviations) to their standard abbreviation.
+    * `computer science and engineering`, `computer science & engineering`, `computr science`, `cs` -> `cse`
+    * `electronics and communication engineering` -> `ece`
+    * `electrical and electronics engineering` -> `eee`
+    * `instrumentation and control engineering` -> `ice`
+    * `mechanical engineering` -> `mech`
+    * `chemical engineering` -> `chem`
+    * `production engineering` -> `prod`
+    * `metallurgical and material science engineering` -> `mme`
+    * `civil engineering` -> `civil`
+    * If the department is not in this list, output it as-is.
+
+6.  **Disambiguation (NEW RULE):** A phrase identified as the department (e.g., "computer science and engineering") **CANNOT** also be extracted as the subject. The subject must be a separate topic.
+
+7.  **Robust Subject Typo Correction:** You **must** correct common misspellings in *subject* names.
     * `algoritms` -> `algorithms`
-    * `computr science` -> `computer science`
     * `desing and analyis` -> `design and analysis`
-6.  **Year:** Extract the four-digit year.
-7.  **Completeness:** If a value is genuinely not present or ambiguous, use `null`. (This rule is for you, the model, even though the examples below are all complete).
 
-[EXAMPLE 1]
+8.  **Year:** Extract the four-digit year.
+
+9.  **Completeness:** If a value is genuinely not present or ambiguous, use `null`. (This rule is for you, the model, even though the examples below are all complete).
+
+[EXAMPLE 1 - UPDATED]
 Query: "find papers for cse department from 2023 on data structures"
-JSON Output: {{"department": "computer science and engineering", "subject": "data structures", "year": "2023"}}
+JSON Output: {{"department": "cse", "subject": "data structures", "year": "2023"}}
 
-[EXAMPLE 2]
+[EXAMPLE 2 - UPDATED]
 Query: "show me the 2021 algoritms papers from computr science"
-JSON Output: {{"department": "computer science", "subject": "algorithms", "year": "2021"}}
+JSON Output: {{"department": "cse", "subject": "algorithms", "year": "2021"}}
 
-[EXAMPLE 3]
+[EXAMPLE 3 - UPDATED]
 Query: "any question paper for mech 2022 on thermodynamics?"
-JSON Output: {{"department": "mechanical engineering", "subject": "thermodynamics", "year": "2022"}}
+JSON Output: {{"department": "mech", "subject": "thermodynamics", "year": "2022"}}
 
-[EXAMPLE 4]
+[EXAMPLE 4 - UPDATED]
 Query: "get me computer science and engineering desing and analyis of algorithms of 2023 paper"
-JSON Output: {{"department": "computer science and engineering", "subject": "design and analysis of algorithms", "year": "2023"}}
+JSON Output: {{"department": "cse", "subject": "design and analysis of algorithms", "year": "2023"}}
+
+[EXAMPLE 5 - NEW]
+Query: "get me Computer science and engineering 2023 automata and formal languages paper"
+JSON Output: {{"department": "cse", "subject": "automata and formal languages", "year": "2023"}}
 
 Now, analyze the following query:
 

@@ -55,13 +55,30 @@ def extract_metadata_with_groq_llama3(text: str, filename: str) -> dict:
     
     prompt = f"""
 You are a precision data extraction engine. Your sole task is to analyze text from a university question paper and extract specific metadata fields into a clean JSON object.
+
 Follow these rules exactly:
 1.  **Output Format:** Respond ONLY with a single, valid JSON object. Do not include any other text or explanations.
-2.  **department:** Extract the full official department name, often found after "DEPARTMENT OF".
+
+2.  **Department Standardization (CRITICAL):** This is your most important rule. You must normalize the extracted department name to its standard abbreviation. If you find the full name, a common typo, or the abbreviation itself, you must output the standard abbreviation.
+    * `computer science and engineering`, `computer science & engineering`, `computer science and engg`, `cs` -> `cse`
+    * `electronics and communication engineering` -> `ece`
+    * `electrical and electronics engineering` -> `eee`
+    * `instrumentation and control engineering` -> `ice`
+    * `mechanical engineering` -> `mech`
+    * `chemical engineering` -> `chem`
+    * `production engineering` -> `prod`
+    * `metallurgical and material science engineering` -> `mme`
+    * `civil engineering` -> `civil`
+
 3.  **subject:** Extract only the subject name. The name often follows keywords like "SUBJECT:" or "Sub. Code & Title :". Explicitly exclude any subject codes (e.g., "(ENIR 11)").
-4.  **year:** Extract the four-digit year of the examination, if present.
-5.  **Missing Values:** If any field cannot be found, its value must be null.
-6.  **Year Inference (Advice):** Pay close attention to dates.
+
+4.  **Subject Normalization:** You **must** convert the extracted subject name to **all lowercase**.
+
+5.  **year:** Extract the four-digit year of the examination, if present.
+
+6.  **Missing Values:** If any field cannot be found, its value must be null.
+
+7.  **Year Inference (Advice):** Pay close attention to dates.
     * A string like "2210-24" or "22-10-24" on an exam paper likely means the date "22-10-2024", so the year is 2024.
     * An academic year like "2023-24" means the exam is for the 2023-2024 session. 2024 is preferred.
 ---
@@ -79,7 +96,7 @@ Correct JSON Output:
   "year": null
 }}
 ---
-[EXAMPLE 2]
+[EXAMPLE 2 - UPDATED]
 Input Text:
 \"\"\"
 B.Tech. DEGREE EXAMINATION, NOVEMBER/DECEMBER 2023.
@@ -88,12 +105,12 @@ CS 8351 - Digital Principles and System Design
 \"\"\"
 Correct JSON Output:
 {{
-  "department": "Computer Science and Engineering",
+  "department": "cse",
   "subject": "Digital Principles and System Design",
   "year": 2023
 }}
 ---
-[EXAMPLE 3 - NEW]
+[EXAMPLE 3 - UPDATED]
 Input Text:
 \"\"\"
 DEPARTMENT OF COMPUTER SCIENCE AND ENGG.
@@ -101,7 +118,7 @@ NATIONAL INSTITUTE OF TECHNOLOGY, TIRUCHIRAPPALLE 620 O15. CYCLE TEST II CSHOI7 
 \"\"\"
 Correct JSON Output:
 {{
-  "department": "COMPUTER SCIENCE AND ENGG.",
+  "department": "cse",
   "subject": "BIG DATA MINING",
   "year": 2024
 }}
